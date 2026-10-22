@@ -59,6 +59,8 @@ def cmd_render(job: dict, out_dir: Path) -> int:
         result = {"ok": True, "file": video.name, "size": video.stat().st_size, "duration": info["duration"],
                   "clips": len(info["scenes"]), "sync": info["sync"], "words": info["words"],
                   "scene_kinds": [c["kind"] for c in info["scenes"]], "credits": "\n".join(credits),
+                  "scene_titles": [str(c.get("title") or "")[:60] for c in info["scenes"]],
+                  "rejected": sum(1 for r in info["search_report"] for t in r.get("tried", []) if not t.get("ok")),
                   "qc": {k: q[k] for k in ("passed", "problems", "loudness_lufs", "true_peak_dbfs", "black_intervals",
                                            "freezes_over_2_5s", "width", "height", "fps")},
                   "render_seconds": info["render_seconds"], "runner": info["runner"]}
