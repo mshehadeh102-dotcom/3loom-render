@@ -207,6 +207,32 @@ def latin_text(img: Path) -> list[str]:
     return words
 
 
+def saturation(img: Path) -> float:
+    """Hasler-Suesstrunk colourfulness: ~0-20 for black-and-white or sepia archive, 30+ for natural colour."""
+    im = Image.open(img).convert("RGB").resize((135, 240))
+    r, g, b = [list(ch.getdata()) for ch in im.split()]
+    rg = [x - y for x, y in zip(r, g)]
+    yb = [0.5 * (x + y) - z for x, y, z in zip(r, g, b)]
+
+    def ms(a):
+        m = sum(a) / len(a)
+        return m, max(0.0, sum(v * v for v in a) / len(a) - m * m) ** 0.5
+
+    (mrg, srg), (myb, syb) = ms(rg), ms(yb)
+    return (srg ** 2 + syb ** 2) ** 0.5 + 0.3 * (mrg ** 2 + myb ** 2) ** 0.5
+
+
+def black_band(img: Path) -> bool:
+    """True when a full-width black stripe crosses the picture (missing satellite data, letterbox inside crop)."""
+    im = Image.open(img).convert("L").resize((90, 160))
+    px = im.load()
+    rows = 0
+    for y in range(16, 144):
+        dark = sum(1 for x in range(90) if px[x, y] < 12)
+        rows += dark >= 86
+    return rows >= 3
+
+
 def check(frames: list[Path]) -> dict:
     lum = [luminance(f) for f in frames]
     words = []
@@ -215,7 +241,9 @@ def check(frames: list[Path]) -> dict:
     std = [ImageStat.Stat(Image.open(f).convert("L")).stddev[0] for f in frames]
     dark = sum(1 for v, d in zip(lum, std) if v < 10 or (v < 22 and d < 10)) / len(lum)
     marks = [w for w in words if WATERMARKS.match(w)]
+    sat = [saturation(f) for f in frames]
     return {"lum": [round(v, 1) for v in lum], "dark_ratio": round(dark, 2), "latin_words": words[:12],
+            "saturation": round(sum(sat) / len(sat), 1), "black_band": any(black_band(f) for f in frames),
             "watermarks": marks, "motion": round(motion(frames), 2) if len(frames) > 1 else 0.0}
 
 
@@ -245,6 +273,13 @@ def precheck(url: str, length: float, src_duration: float, work: Path, tag: str)
     return check(frames)
 
 
+def reject_style(rep: dict) -> None:
+    if rep.get("saturation", 99) < 20 and max(rep.get("lum") or [0]) > 30:
+        raise VetError(f"black-and-white / sepia archival look (colourfulness {rep['saturation']})")
+    if rep.get("black_band"):
+        raise VetError("black stripe across the picture")
+
+
 def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tuple[Path, dict]:
     """Returns (segment, report). Raises VetError when the candidate must not be used."""
     url = media_url(c)
@@ -259,6 +294,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
             raise VetError("dark image")
         if len(rep["latin_words"]) >= 3 or rep["watermarks"]:
             raise VetError(f"text/logo in image: {rep['latin_words'][:5]}")
+        reject_style(rep)
         seg = ken_burns(work / f"{tag}_src.jpg", length, work, tag, move)
         if detect(seg, "freezedetect=n=0.002:d=2.0", r"freeze_duration: ([\d.]+)"):
             raise VetError("featureless image (looks frozen even with camera move)")
@@ -272,6 +308,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
         raise VetError(f"black/dark footage {pre['lum']}")
     if len(pre["latin_words"]) >= 3 or pre["watermarks"]:
         raise VetError(f"text/logo in footage: {(pre['watermarks'] or pre['latin_words'])[:5]}")
+    reject_style(pre)
     seg = video_segment(url, length, work, tag, info["duration"])
     frames = sample_frames(seg, work, tag)
     rep = check(frames)
