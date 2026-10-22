@@ -29,6 +29,7 @@ CAPTION_Y = 1240          # inside the safe area (150..1640)
 CAPTION_MAX_W = 860       # safe area x 40..950 (centred)
 DOWNLOAD_LIMIT = 200 * 1024 * 1024
 MAX_SLOWDOWN = 1.6        # stretch short clips up to 1.6x before looping
+INTRO_SKIP_SEC = 2.0       # avoid source title cards / static openings
 
 
 class RenderError(RuntimeError):
@@ -168,14 +169,18 @@ def render(audio: Path, clips: list[dict], script: str, out: Path,
         for i, c in enumerate(clips):
             src = download(c["url"], work / f"src{i}.mp4")
             dst = work / f"seg{i}.mp4"
+            source_duration = probe_duration(src)
+            if source_duration < 4.0:
+                raise RenderError(f"scene {i+1} too short for professional montage")
+            intro_skip = min(INTRO_SKIP_SEC, max(0.0, source_duration - 3.0))
             # A clip a little shorter than its share (e.g. an 8 s Flow shot for a 12 s slot) is slowed
             # down smoothly instead of jumping back to its first frame; much shorter clips still loop.
             try:
-                factor = seg / probe_duration(src)
+                factor = seg / max(0.1, source_duration - intro_skip)
             except RenderError:
                 factor = 1.0
             slow = f"setpts={factor:.4f}*PTS," if 1.0 < factor <= MAX_SLOWDOWN else ""
-            run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(src), "-t", f"{seg:.3f}",
+            run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-ss", f"{intro_skip:.3f}", "-i", str(src), "-t", f"{seg:.3f}",
                  "-vf", f"{slow}scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={FPS},setsar=1,format=yuv420p",
                  "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst)])
             parts.append(dst)
@@ -203,6 +208,12 @@ def render(audio: Path, clips: list[dict], script: str, out: Path,
                 "-pix_fmt", "yuv420p",
                 "-r", str(FPS), "-c:a", "copy", "-shortest", "-movflags", "+faststart", str(out)]
         run(cmd)
+        # Detect black title cards or blank transitions before delivering the MP4.
+        qc = subprocess.run(["ffmpeg", "-hide_banner", "-i", str(out), "-vf", "blackdetect=d=0.45:pix_th=0.08", "-an", "-f", "null", "-"], capture_output=True, text=True)
+        if qc.returncode != 0:
+            raise RenderError("visual QC probe failed")
+        if "black_start:" in qc.stderr:
+            raise RenderError("VISUAL_QC_BLOCKED: black frames or black title card detected")
         return {"duration": round(total, 2), "clips": len(clips), "captions": len(tl),
                 "timeline": [{"start": a, "end": b, "text": t} for a, b, t in tl],
                 "sync": "approximate (proportional to text length, no ASR)"}
