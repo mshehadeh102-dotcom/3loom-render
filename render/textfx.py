@@ -151,15 +151,13 @@ def fact_card(title: str, sub: str = "") -> Image.Image:
 
 
 def end_overlay(channel: str = "علوم بلهجتنا") -> Image.Image:
-    a = text_block("تابعنا عشان نكمل", 70, fill=WHITE, stroke=6)
+    """Channel badge only: the spoken outro is already on screen as captions, so no repeated sentence."""
     b = text_block(channel, 96, fill=ACCENT, stroke=8)
-    w = max(a.width, b.width) + 120
-    h = a.height + b.height + 110
+    w, h = b.width + 120, b.height + 90
     card = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     d = ImageDraw.Draw(card)
     d.rounded_rectangle((0, 0, w - 1, h - 1), radius=40, fill=(11, 30, 58, 205), outline=ACCENT, width=5)
-    card.alpha_composite(a, ((w - a.width) // 2, 40))
-    card.alpha_composite(b, ((w - b.width) // 2, 40 + a.height + 30))
+    card.alpha_composite(b, ((w - b.width) // 2, 45))
     return card
 
 
