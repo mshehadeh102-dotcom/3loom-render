@@ -37,8 +37,8 @@ jobs:
           cp "jobs/${JOB_ID}.json" "$JOB_FILE"
           python3 render/run_job.py mask "$JOB_FILE"
 
-      - name: Install tools without apt (static ffmpeg, Noto Kufi Arabic, Pillow+raqm, RapidOCR)
-        timeout-minutes: 8
+      - name: Install tools without apt (static ffmpeg, Noto Kufi Arabic, Pillow+raqm, RapidOCR, CLIP)
+        timeout-minutes: 12
         run: |
           set -e
           mkdir -p "$HOME/bin" "$HOME/fonts"
@@ -53,6 +53,11 @@ jobs:
           curl -fsSL --retry 3 -o "$HOME/fonts/NotoKufiArabic.ttf" "https://raw.githubusercontent.com/google/fonts/main/ofl/notokufiarabic/NotoKufiArabic%5Bwght%5D.ttf"
           echo "CAPTION_FONT=$HOME/fonts/NotoKufiArabic.ttf" >> "$GITHUB_ENV"
           python3 -m pip install --quiet pillow==11.1.0 rapidocr-onnxruntime
+          # optional visual relevance gate (CLIP on CPU); the render skips the gate if this fails
+          timeout 240 python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu \
+            && timeout 180 python3 -m pip install --quiet open_clip_torch \
+            && timeout 120 python3 -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='openai'); print('CLIP ready')" \
+            || echo "CLIP unavailable: relevance gate will be skipped"
           if ! python3 -c "from PIL import features; assert features.check('raqm')"; then
             echo "raqm needs libfribidi; trying apt with a hard time limit"
             timeout 240 sudo apt-get install -y -qq --no-install-recommends libfribidi0 libharfbuzz0b \
