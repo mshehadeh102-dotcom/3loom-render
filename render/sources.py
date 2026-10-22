@@ -109,9 +109,11 @@ def commons_videos(query: str, limit: int = 12) -> list[dict]:
             h = int(der.get("height") or 0)
             if 600 <= h <= 1100 and (best is None or abs(h - 720) < abs(int(best.get("height") or 0) - 720)):
                 best = der
+        orig = url
         if best and best.get("src"):
             url = best["src"]
-        out.append({"kind": "video", "source": "Wikimedia Commons", "url": url, "title": p.get("title", "")[5:],
+        out.append({"kind": "video", "source": "Wikimedia Commons", "url": url, "alt_url": orig if orig != url else "",
+                    "title": p.get("title", "")[5:],
                     "desc": _strip((meta.get("ImageDescription") or {}).get("value"))[:300],
                     "license": lic, "author": _strip((meta.get("Artist") or {}).get("value"))[:120] or "unknown",
                     "page": vi.get("descriptionurl", ""), "width": int(vi.get("width") or 0),
