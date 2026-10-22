@@ -32,7 +32,7 @@ def _get(url: str, params: dict, timeout: int = 30) -> dict:
                 return json.loads(r.read().decode())
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
-                time.sleep(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1))
+                vet.cooldown(q, e.headers.get("Retry-After"), attempt)
                 continue
             raise
     return {}
