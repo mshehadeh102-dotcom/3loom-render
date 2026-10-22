@@ -12,6 +12,9 @@ import json
 import re
 import shutil
 import subprocess
+import threading
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -76,19 +79,43 @@ def media_url(c: dict) -> str:
     return url
 
 
-def download(url: str, dest: Path, limit: int = 60 * 1024 * 1024) -> Path:
+_THROTTLE = threading.Lock()
+_LAST = {"t": 0.0}
+
+
+def polite(url: str) -> None:
+    """Wikimedia rate-limits bursts (HTTP 429): keep at least 0.8 s between requests to its hosts."""
+    if "wikimedia.org" not in url:
+        return
+    with _THROTTLE:
+        wait = 0.8 - (time.time() - _LAST["t"])
+        if wait > 0:
+            time.sleep(wait)
+        _LAST["t"] = time.time()
+
+
+def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024) -> Path:
     if not url.startswith("https://"):
         shutil.copyfile(url, dest)
         return dest
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=90) as r, open(dest, "wb") as f:
-        total = 0
-        while chunk := r.read(1 << 20):
-            total += len(chunk)
-            if total > limit:
-                raise VetError("file too large")
-            f.write(chunk)
-    return dest
+    for attempt in range(4):
+        polite(url)
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
+                total = 0
+                while chunk := r.read(1 << 20):
+                    total += len(chunk)
+                    if total > limit:
+                        raise VetError("file too large")
+                    f.write(chunk)
+            return dest
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1))
+                continue
+            raise VetError(f"download HTTP {e.code}")
+    raise VetError("download failed")
 
 
 COVER = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
@@ -300,6 +327,8 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
             raise VetError("featureless image (looks frozen even with camera move)")
         rep["treatment"] = "ken-burns photo"
         return seg, rep
+    if url.startswith("https://"):  # work on a local copy: seeking over HTTP triggers rate limits
+        url = str(download(url, work / f"{tag}_src.vid"))
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
         raise VetError("video resolution too low")
