@@ -73,6 +73,18 @@ def test_style_checks(tmp=Path("/tmp/3loom_style_test")):
     assert vet.black_band(tmp / "band.png") and not vet.black_band(tmp / "colour.png")
 
 
+def test_relevance_decision():
+    import relevance
+    labels = relevance.prompts_for(["soda fizzing"], ["soda", "bubbles"]) + relevance.DISTRACTORS
+    n = 3
+    good = [0.3, 0.2, 0.15] + [0.35 / len(relevance.DISTRACTORS)] * len(relevance.DISTRACTORS)
+    bad = [0.05, 0.1, 0.05, 0.7] + [0.1 / (len(relevance.DISTRACTORS) - 1)] * (len(relevance.DISTRACTORS) - 1)
+    assert relevance.decide(good, n, labels)["ok"]
+    r = relevance.decide(bad, n, labels)
+    assert not r["ok"] and "forest" in r["best_label"], r
+    assert relevance.prompts_for(["a", "A", ""], ["b"]) == ["a photo of a", "a photo of b"]
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
