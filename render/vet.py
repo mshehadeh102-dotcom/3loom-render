@@ -371,6 +371,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
     seg = video_segment(url, length, work, tag, info["duration"])
     frames = sample_frames(seg, work, tag)
     rep = check(frames)
+    rep["relevance"] = pre.get("relevance")
     if rep["dark_ratio"] >= 0.5:
         raise VetError(f"black/dark footage {rep['lum']}")
     blacks = detect(seg, "blackdetect=d=0.5:pix_th=0.10", r"black_duration:([\d.]+)")
