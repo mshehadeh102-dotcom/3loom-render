@@ -28,6 +28,7 @@ MIN_PHRASE_SEC = 0.6
 CAPTION_Y = 1240          # inside the safe area (150..1640)
 CAPTION_MAX_W = 860       # safe area x 40..950 (centred)
 DOWNLOAD_LIMIT = 200 * 1024 * 1024
+MAX_SLOWDOWN = 1.6        # stretch short clips up to 1.6x before looping
 
 
 class RenderError(RuntimeError):
@@ -167,8 +168,15 @@ def render(audio: Path, clips: list[dict], script: str, out: Path,
         for i, c in enumerate(clips):
             src = download(c["url"], work / f"src{i}.mp4")
             dst = work / f"seg{i}.mp4"
+            # A clip a little shorter than its share (e.g. an 8 s Flow shot for a 12 s slot) is slowed
+            # down smoothly instead of jumping back to its first frame; much shorter clips still loop.
+            try:
+                factor = seg / probe_duration(src)
+            except RenderError:
+                factor = 1.0
+            slow = f"setpts={factor:.4f}*PTS," if 1.0 < factor <= MAX_SLOWDOWN else ""
             run(["ffmpeg", "-y", "-v", "error", "-stream_loop", "-1", "-i", str(src), "-t", f"{seg:.3f}",
-                 "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={FPS},setsar=1,format=yuv420p",
+                 "-vf", f"{slow}scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={FPS},setsar=1,format=yuv420p",
                  "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", str(dst)])
             parts.append(dst)
         lst = work / "list.txt"
