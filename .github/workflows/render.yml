@@ -37,15 +37,27 @@ jobs:
           cp "jobs/${JOB_ID}.json" "$JOB_FILE"
           python3 render/run_job.py mask "$JOB_FILE"
 
-      - name: Install ffmpeg, Arabic fonts, OCR and Pillow (raqm)
+      - name: Install tools without apt (static ffmpeg, Noto Kufi Arabic, Pillow+raqm, RapidOCR)
         timeout-minutes: 8
-        env:
-          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo -E apt-get update -qq
-          sudo -E apt-get install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-install-recommends ffmpeg fonts-noto-core fontconfig libfribidi0 libharfbuzz0b tesseract-ocr tesseract-ocr-eng
-          fc-cache -f >/dev/null
-          python3 -m pip install --quiet pillow==11.1.0
+          set -e
+          mkdir -p "$HOME/bin" "$HOME/fonts"
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            curl -fsSL --retry 3 -o /tmp/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz
+            tar -xJf /tmp/ff.tar.xz -C /tmp
+            cp /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffmpeg /tmp/ffmpeg-master-latest-linux64-gpl/bin/ffprobe "$HOME/bin/"
+            echo "$HOME/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/bin:$PATH"
+          fi
+          ffmpeg -version | head -1
+          curl -fsSL --retry 3 -o "$HOME/fonts/NotoKufiArabic.ttf" "https://raw.githubusercontent.com/google/fonts/main/ofl/notokufiarabic/NotoKufiArabic%5Bwght%5D.ttf"
+          echo "CAPTION_FONT=$HOME/fonts/NotoKufiArabic.ttf" >> "$GITHUB_ENV"
+          python3 -m pip install --quiet pillow==11.1.0 rapidocr-onnxruntime
+          if ! python3 -c "from PIL import features; assert features.check('raqm')"; then
+            echo "raqm needs libfribidi; trying apt with a hard time limit"
+            timeout 240 sudo apt-get install -y -qq --no-install-recommends libfribidi0 libharfbuzz0b \
+              || (timeout 240 sudo apt-get update -qq && timeout 240 sudo apt-get install -y -qq --no-install-recommends libfribidi0 libharfbuzz0b)
+          fi
           python3 -c "from PIL import features; assert features.check('raqm'), 'raqm missing'"
           echo "runner: $(nproc) CPU, $(free -g | awk '/Mem/{print $2}') GB RAM, GPU: $(command -v nvidia-smi >/dev/null && echo yes || echo none)"
 
