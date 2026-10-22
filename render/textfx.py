@@ -161,8 +161,24 @@ def end_overlay(channel: str = "علوم بلهجتنا") -> Image.Image:
     return card
 
 
+WORD_Y = 1240  # centre of the single big word (about 65% of the height, above the Shorts UI)
+
+
+def big_word(word: str, accent: bool = False, pop: float = 1.0) -> Image.Image:
+    """One spoken word, large and centred: the caption style of the Arabic Shorts that perform best
+    (Petverse, Wameed, Mohnad Maged; see research arabic-competitors-2026-10-23). `pop` > 1 scales the
+    word in for its first frames."""
+    size = 150
+    while True:
+        im = _text_img(word, int(size * pop), fill=ACCENT if accent else WHITE, stroke=max(8, int(size * 0.09)))
+        if im.width <= W - 2 * SAFE_X or size <= 70:
+            return im
+        size -= 8
+
+
 def compose(caption: Image.Image | None = None, hook: Image.Image | None = None,
-            card: Image.Image | None = None, end: Image.Image | None = None) -> Image.Image:
+            card: Image.Image | None = None, end: Image.Image | None = None,
+            word: Image.Image | None = None) -> Image.Image:
     frame = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if hook is not None:
         frame.alpha_composite(hook, (0, HOOK_Y))
@@ -172,6 +188,8 @@ def compose(caption: Image.Image | None = None, hook: Image.Image | None = None,
         frame.alpha_composite(end, ((W - end.width) // 2, 700))
     if caption is not None:
         frame.alpha_composite(caption, ((W - caption.width) // 2, CAPTION_CENTER_Y - caption.height // 2))
+    if word is not None:
+        frame.alpha_composite(word, ((W - word.width) // 2, WORD_Y - word.height // 2))
     return frame
 
 
