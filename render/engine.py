@@ -154,10 +154,13 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
             cands += sources.find_candidates(sc, log)
         except Exception as e:  # noqa: BLE001
             log(f"scene {i + 1}: search failed: {e}")
+        throttled = 0
         for c in cands:
             key = c.get("page") or c["url"]
             if len(tried) >= MAX_TRIES or time.monotonic() - T0["t"] > SEARCH_BUDGET:
                 break
+            if throttled >= 2 and c["kind"] == "video" and c.get("source") == "Wikimedia Commons":
+                continue  # this scene's Commons videos keep returning 429: try photos / NASA instead
             with LOCK:
                 if key in used:
                     continue
@@ -170,6 +173,7 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
                         "license": c.get("license"), "author": c.get("author"), "page": c.get("page"), "score": c.get("score")}
             except Exception as e:  # noqa: BLE001
                 tried.append({"title": c.get("title"), "ok": False, "reason": str(e)[:160]})
+                throttled += "HTTP 429" in str(e)
                 log(f"scene {i + 1}: rejected «{c.get('title')}»: {str(e)[:120]}")
     # generated motion-graphics scene
     bg = textfx.gradient_background(i + 7, work / f"g{i}.jpg")
