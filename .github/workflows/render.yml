@@ -40,13 +40,26 @@ jobs:
       - name: Install ffmpeg, Arabic fonts and Pillow (raqm)
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-core fontconfig libfribidi0 libharfbuzz0b >/dev/null
+          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-core fontconfig libfribidi0 libharfbuzz0b tesseract-ocr tesseract-ocr-eng >/dev/null
           fc-cache -f >/dev/null
           python3 -m pip install --quiet pillow==11.1.0
           python3 -c "from PIL import features; assert features.check('raqm'), 'raqm missing'"
+          echo "runner: $(nproc) CPU, $(free -g | awk '/Mem/{print $2}') GB RAM, GPU: $(command -v nvidia-smi >/dev/null && echo yes || echo none)"
 
-      - name: Render
+      - name: Unit tests (offline)
+        run: python3 tests/test_units.py
+
+      - name: Render (scene engine v2)
         run: python3 render/run_job.py render "$JOB_FILE" "$OUT"
+
+      - name: Keep render report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-report-${{ inputs.job_id }}
+          path: /tmp/3loom-out/render_report.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Attach video to release
         id: upload
@@ -56,13 +69,16 @@ jobs:
             --title "3loom renders (drafts for review, not published)" \
             --notes "Temporary review copies produced by n8n. Assets older than 14 days are removed automatically."
           gh release upload "$RELEASE_TAG" "$OUT/${JOB_ID}.mp4" --clobber
-          id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq ".assets[] | select(.name==\"${JOB_ID}.mp4\") | .id")
-          echo "asset_id=$id" >> "$GITHUB_OUTPUT"
+          if [ -f "$OUT/${JOB_ID}_sheet.jpg" ]; then gh release upload "$RELEASE_TAG" "$OUT/${JOB_ID}_sheet.jpg" --clobber; fi
+          assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq ".assets[] | [.name, .id] | @tsv")
+          echo "asset_id=$(echo "$assets" | awk -v n="${JOB_ID}.mp4" '$1==n{print $2}')" >> "$GITHUB_OUTPUT"
+          echo "sheet_asset_id=$(echo "$assets" | awk -v n="${JOB_ID}_sheet.jpg" '$1==n{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Report result to n8n
         if: always()
         env:
           ASSET_ID: ${{ steps.upload.outputs.asset_id }}
+          SHEET_ASSET_ID: ${{ steps.upload.outputs.sheet_asset_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           [ -f "$JOB_FILE" ] || { echo "no job file; cannot call back"; exit 1; }
