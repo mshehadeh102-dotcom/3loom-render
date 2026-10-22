@@ -55,6 +55,24 @@ def test_time_scenes_follow_words():
     assert all(s["end"] > s["start"] for s in scenes)
 
 
+def test_style_checks(tmp=Path("/tmp/3loom_style_test")):
+    import vet
+    from PIL import Image, ImageDraw
+    tmp.mkdir(exist_ok=True)
+    sep = Image.effect_noise((540, 960), 50).convert("L").point(lambda v: v // 2 + 90)
+    Image.merge("RGB", [sep.point(lambda v: min(255, v + 25)), sep.point(lambda v: v + 8), sep]).save(tmp / "sepia.png")
+    col = Image.new("RGB", (540, 960))
+    d = ImageDraw.Draw(col)
+    for i in range(0, 960, 40):
+        d.rectangle((0, i, 540, i + 40), fill=((i * 3) % 255, (i * 7) % 255, (255 - i) % 255))
+    col.save(tmp / "colour.png")
+    band = col.copy()
+    ImageDraw.Draw(band).rectangle((0, 400, 540, 470), fill=(0, 0, 0))
+    band.save(tmp / "band.png")
+    assert vet.saturation(tmp / "sepia.png") < 20 < vet.saturation(tmp / "colour.png")
+    assert vet.black_band(tmp / "band.png") and not vet.black_band(tmp / "colour.png")
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
