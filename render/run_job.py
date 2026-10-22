@@ -41,24 +41,36 @@ def cmd_mask(job: dict) -> None:
 
 
 def cmd_render(job: dict, out_dir: Path) -> int:
-    from render import RenderError, render
+    """Scene engine v2 (engine.py). Old jobs without a scene plan still work: scenes are derived
+    from the script sentences and the supplied clips / visual keywords."""
+    import engine
 
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {"ok": False}
     try:
-        audio = out_dir / "voice.mp3"
-        audio.write_bytes(base64.b64decode(job["audio_b64"]))
-        clips = [c for c in job.get("clips", []) if isinstance(c, dict) and c.get("url")][:8]
         lufs = float(job.get("loudness_lufs", -14))
         if not -20 <= lufs <= -9:
-            raise RenderError("unsupported loudness")
+            raise engine.RenderError("unsupported loudness")
+        info = engine.render_job(job, out_dir)
         video = out_dir / f"{job['job_id']}.mp4"
-        info = render(audio, clips, str(job.get("script", "")), video, lufs=lufs)
-        audio.unlink(missing_ok=True)
-        result = {"ok": True, "file": video.name, "size": video.stat().st_size,
-                  **{k: info[k] for k in ("duration", "clips", "captions", "sync")}}
+        credits = [f"{c['source']}: {c.get('title') or ''} — {c.get('author') or ''} — {c.get('license') or ''} — {c.get('page') or ''}"
+                   for c in info["scenes"] if c.get("source") not in ("generated",)]
+        q = info["qc"]
+        result = {"ok": True, "file": video.name, "size": video.stat().st_size, "duration": info["duration"],
+                  "clips": len(info["scenes"]), "sync": info["sync"], "words": info["words"],
+                  "scene_kinds": [c["kind"] for c in info["scenes"]], "credits": "\n".join(credits),
+                  "qc": {k: q[k] for k in ("passed", "problems", "loudness_lufs", "true_peak_dbfs", "black_intervals",
+                                           "freezes_over_2_5s", "width", "height", "fps")},
+                  "render_seconds": info["render_seconds"], "runner": info["runner"]}
     except Exception as e:  # reported back to n8n instead of hanging the Wait node
-        result = {"ok": False, "error": f"{type(e).__name__}: {e}"[:1500]}
+        rep = out_dir / "render_report.json"
+        extra = ""
+        if rep.exists():
+            try:
+                extra = " | qc=" + json.dumps(json.loads(rep.read_text(encoding="utf-8")).get("qc", {}), ensure_ascii=False)[:600]
+            except Exception:  # noqa: BLE001
+                pass
+        result = {"ok": False, "error": (f"{type(e).__name__}: {e}" + extra)[:1500]}
     (out_dir / "result.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result["ok"] else 1
@@ -72,7 +84,8 @@ def cmd_callback(job: dict, out_dir: Path) -> int:
     if result.get("ok") and not asset:
         result = {"ok": False, "error": "video rendered but upload to release failed"}
     payload = {"job_id": job["job_id"], "episode_id": job.get("episode_id"), "nonce": job.get("nonce", ""),
-               "asset_id": asset, "run_url": os.environ.get("RUN_URL", ""), **result}
+               "asset_id": asset, "sheet_asset_id": os.environ.get("SHEET_ASSET_ID", "").strip(),
+               "run_url": os.environ.get("RUN_URL", ""), **result}
     url = job.get("callback_url", "")
     if not url.startswith("https://"):
         print("no https callback_url; nothing sent")
