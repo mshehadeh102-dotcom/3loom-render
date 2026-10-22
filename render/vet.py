@@ -83,15 +83,46 @@ _THROTTLE = threading.Lock()
 _LAST = {"t": 0.0}
 
 
+_COOL = {"until": 0.0}
+
+
+class gate_release:
+    """Context manager that releases an already-acquired semaphore on exit (also on errors)."""
+
+    def __init__(self, sem):
+        self.sem = sem
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.sem.release()
+        return False
+
+
+WIKI_DL = threading.Semaphore(1)  # one Wikimedia transfer at a time; parallel pulls triggered 429 bursts
+
+
 def polite(url: str) -> None:
-    """Wikimedia rate-limits bursts (HTTP 429): keep at least 0.8 s between requests to its hosts."""
+    """Wikimedia rate-limits bursts (HTTP 429): keep 0.8 s between requests to its hosts and honour a
+    shared cooldown after any 429, so one rejection does not cascade into every following request."""
     if "wikimedia.org" not in url:
         return
     with _THROTTLE:
-        wait = 0.8 - (time.time() - _LAST["t"])
+        wait = max(0.8 - (time.time() - _LAST["t"]), _COOL["until"] - time.time())
         if wait > 0:
             time.sleep(wait)
         _LAST["t"] = time.time()
+
+
+def cooldown(url: str, retry_after: str | None, attempt: int) -> None:
+    """Called on HTTP 429/5xx: every thread waits before its next Wikimedia request."""
+    secs = min(float(retry_after or 0) or 15.0 * (attempt + 1), 60.0)
+    if "wikimedia.org" in url:
+        with _THROTTLE:
+            _COOL["until"] = max(_COOL["until"], time.time() + secs)
+    else:
+        time.sleep(secs)
 
 
 def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float = 0.0) -> tuple[Path, bool]:
@@ -101,12 +132,14 @@ def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float
     if not url.startswith("https://"):
         shutil.copyfile(url, dest)
         return dest, False
+    gate = WIKI_DL if "wikimedia.org" in url else threading.Semaphore(1)
     for attempt in range(4):
         polite(url)
+        gate.acquire()
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         t0 = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
+            with gate_release(gate), urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
                 total = 0
                 while chunk := r.read(1 << 20):
                     f.write(chunk)
@@ -119,7 +152,7 @@ def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float
             return dest, False
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
-                time.sleep(min(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1), 20))
+                cooldown(url, e.headers.get("Retry-After"), attempt)
                 continue
             raise VetError(f"download HTTP {e.code}")
     raise VetError("download failed")
