@@ -34,6 +34,13 @@ class RenderError(RuntimeError):
     pass
 
 
+import threading  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor  # noqa: E402
+
+LOCK = threading.Lock()
+WORKERS = int(os.environ.get("SCENE_WORKERS", "3"))
+
+
 def log(msg: str) -> None:
     print(f"[engine {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
@@ -145,13 +152,14 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
             log(f"scene {i + 1}: search failed: {e}")
         for c in cands:
             key = c.get("page") or c["url"]
-            if key in used:
-                continue
             if len(tried) >= MAX_TRIES:
                 break
+            with LOCK:
+                if key in used:
+                    continue
+                used.add(key)  # reserve so a parallel scene does not take the same clip
             try:
                 seg, rep = vet.build_scene(c, length, work, f"s{i}_{len(tried)}", move=i)
-                used.add(key)
                 tried.append({"title": c.get("title"), "ok": True, **rep})
                 report.append({"scene": i + 1, "tried": tried})
                 return {"segment": seg, "kind": rep.get("treatment"), "source": c.get("source"), "title": c.get("title"),
@@ -318,9 +326,12 @@ def render_job(job: dict, out_dir: Path) -> dict:
         log("scenes: " + ", ".join(f"{s['start']:.1f}-{s['end']:.1f}" for s in scenes))
 
         used, report, chosen, segs, durs = set(), [], [], [], []
+        lengths = [sc["dur"] + (XF if i < len(scenes) - 1 else 0.0) for i, sc in enumerate(scenes)]
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            picks = list(pool.map(lambda i: build_scene_segment(scenes[i], i, lengths[i], work, used, report), range(len(scenes))))
+        report.sort(key=lambda r: r["scene"])
         for i, sc in enumerate(scenes):
-            length = sc["dur"] + (XF if i < len(scenes) - 1 else 0.0)
-            pick = build_scene_segment(sc, i, length, work, used, report)
+            pick = picks[i]
             if pick.get("graphic") and not sc.get("card"):
                 g = sc.get("graphic") or {}
                 sc["card"] = {"title": g.get("title") or " ".join(sc["text"].split()[:3]), "sub": g.get("sub", "")}
