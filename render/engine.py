@@ -26,7 +26,7 @@ FPS = 30
 W, H = 1080, 1920
 XF = 0.4                 # crossfade seconds
 MIN_SCENE = 2.6          # seconds
-MAX_TRIES = 6            # candidates tried per scene
+MAX_TRIES = 8            # candidates tried per scene
 TRANSITIONS = ["fade", "smoothleft", "fade", "smoothup", "fade", "circleopen"]
 
 
