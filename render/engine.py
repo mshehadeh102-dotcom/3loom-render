@@ -316,6 +316,8 @@ def render_job(job: dict, out_dir: Path) -> dict:
         if not words:
             raise RenderError("script has no words")
         log(f"voice {total:.2f}s, {len(words)} words, sync={sync}")
+        import relevance
+        log(f"relevance gate: {relevance.status()}")
 
         scenes = [dict(s) for s in (job.get("scenes") or [])] or default_scenes(job)
         flow = [u for u in (job.get("flow_clips") or []) if u]
