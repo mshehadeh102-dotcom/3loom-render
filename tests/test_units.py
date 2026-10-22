@@ -85,6 +85,12 @@ def test_relevance_decision():
     assert relevance.prompts_for(["a", "A", ""], ["b"]) == ["a photo of a", "a photo of b"]
 
 
+def test_generated_clip_starts_at_zero():
+    import vet
+    assert vet.window_start(5.0, 6.0, intro=0.0) == 0.0
+    assert vet.window_start(60.0, 6.0) >= vet.INTRO_SKIP
+
+
 if __name__ == "__main__":
     n = 0
     for name, fn in list(globals().items()):
