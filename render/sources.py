@@ -54,6 +54,12 @@ def score(cand: dict, must: list[str], queries: list[str], avoid: list[str]) -> 
             s += 1.5
     qtok = set().union(*[_tokens(q) for q in queries]) if queries else set()
     s += 0.5 * len(qtok & _tokens(title))
+    sat = re.compile(r"\b(satellite|from space|iss\d*|expedition|modis|landsat|aster|terra|aqua|sentinel|false.colou?r|orbit|astronaut)\b", re.I)
+    wants_space = any(re.search(r"satellite|space|orbit|earth from", x, re.I) for x in list(must) + list(queries))
+    if not wants_space and sat.search(cand.get("title", "") + " " + cand.get("desc", "")[:200]):
+        s -= 3.5
+    if re.search(r"\b(19[0-6]\d|archival|newsreel|black and white|b&w)\b", cand.get("title", ""), re.I):
+        s -= 3
     for a in avoid:
         a = a.lower().strip()
         if a and a in text:
@@ -141,9 +147,12 @@ def find_candidates(scene: dict, log=print) -> list[dict]:
     """All candidates for a scene, best first. Network errors on one source never stop the others."""
     queries = [q for q in (scene.get("queries") or []) if q][:3] or [scene.get("text", "")[:60]]
     must, avoid = scene.get("must") or [], scene.get("avoid") or []
+    generic = " ".join(must[:2]).strip()
+    if generic and generic.lower() not in [q.lower() for q in queries]:
+        queries = queries + [generic]
     seen, cands = set(), []
     for qi, q in enumerate(queries):
-        if qi and len([c for c in cands if c["score"] > 0]) >= 6:
+        if qi and len([c for c in cands if c["score"] > 0]) >= 8:
             break
         for fn in (lambda: commons_videos(q), lambda: nasa(q, "video"), lambda: commons_images(q), lambda: nasa(q, "image")):
             try:
