@@ -201,6 +201,24 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
             "license": "original", "author": "علوم بلهجتنا", "page": "", "graphic": True}
 
 
+CUT_EVERY = 2.5  # seconds: the reference Shorts change picture every ~2.4-3.3 s
+
+
+def punch_cuts(seg: Path, length: float, work: Path, tag: str, i: int) -> Path:
+    """Hard 'punch-in' cuts inside one long shot: alternate full frame and a 1.25x crop (shifted a little,
+    left or right by scene) every ~2.5 s, so a 10 s generated shot reads as 4 shots without new footage."""
+    n = max(2, round(length / CUT_EVERY))
+    frames = max(1, int(round(length / n * FPS)))
+    shift = 0.04 if i % 2 == 0 else -0.04
+    on = f"eq(mod(floor(in/{frames}),2),1)"
+    vf = (f"zoompan=z='if({on},1.25,1)':x='iw/2-(iw/zoom/2)+if({on},iw*{shift},0)':y='ih/2-(ih/zoom/2)'"
+          f":d=1:s={W}x{H}:fps={FPS},format=yuv420p")
+    out = work / f"{tag}_cuts.mp4"
+    sh(["ffmpeg", "-y", "-v", "error", "-i", str(seg), "-vf", vf, "-an", "-c:v", "libx264", "-preset", "veryfast",
+        "-crf", "19", str(out)], timeout=600)
+    return out
+
+
 def crossfade(segs: list[Path], durs: list[float], out: Path) -> None:
     if len(segs) == 1:
         shutil.copyfile(segs[0], out)
@@ -218,7 +236,13 @@ def crossfade(segs: list[Path], durs: list[float], out: Path) -> None:
 
 
 # ---------------------------------------------------------------- overlay track
-def overlay_track(words: list[dict], scenes: list[dict], hook: str, total: float, work: Path) -> Path:
+def is_accent(word: str) -> bool:
+    """Numbers and long content words get the yellow accent (keeps roughly 1 word in 4 highlighted)."""
+    return any(ch.isdigit() for ch in word) or len(word) >= 6
+
+
+def overlay_track(words: list[dict], scenes: list[dict], hook: str, total: float, work: Path,
+                  style: str = "word") -> Path:
     lines = align.caption_lines(words)
     line_of = {wi: li for li, l in enumerate(lines) for wi in l}
     hook_end = min(3.2, max(2.0, scenes[0]["end"] - 0.2)) if hook else 0.0
@@ -229,7 +253,7 @@ def overlay_track(words: list[dict], scenes: list[dict], hook: str, total: float
     for k in range(1, 5):
         pts.add(round(0.07 * k, 3))  # hook pop-in steps
     for w in words:
-        pts.update({w["start"], w["end"]})
+        pts.update({w["start"], w["end"], round(w["start"] + 0.08, 3)})
     for a, b, _ in cards:
         pts.update({max(0.0, a), max(0.0, b)})
     pts = sorted(p for p in pts if 0.0 <= p <= total)
@@ -256,13 +280,21 @@ def overlay_track(words: list[dict], scenes: list[dict], hook: str, total: float
             continue
         t = a + 1e-4
         cap = caption_at(t)
+        wi = None
+        if style == "word" and cap is not None:
+            wi = lines[cap[0]][cap[1]]
+            if hook and t < hook_end:
+                wi = None  # the hook title is on screen: no second big text
+        pop = 1.12 if wi is not None and t < words[wi]["start"] + 0.08 else 1.0
         hook_p = None if not hook or t >= hook_end else min(1.0, (t + 0.07) / 0.28)
         card = next((c for (s, e, c) in cards if s <= t < e), None)
         end = t >= end_start
-        key = (cap, None if hook_p is None else round(hook_p, 2), json.dumps(card, ensure_ascii=False) if card else None, end)
+        key = (cap if style != "word" else (wi, pop), None if hook_p is None else round(hook_p, 2),
+               json.dumps(card, ensure_ascii=False) if card else None, end)
         if key not in cache:
             img = textfx.compose(
-                caption=textfx.caption_line([words[i]["word"] for i in lines[cap[0]]], cap[1]) if cap else None,
+                caption=textfx.caption_line([words[i]["word"] for i in lines[cap[0]]], cap[1]) if cap and style != "word" else None,
+                word=textfx.big_word(words[wi]["word"], is_accent(words[wi]["word"]), pop) if wi is not None else None,
                 hook=textfx.hook_overlay(hook, hook_p) if hook_p is not None else None,
                 card=textfx.fact_card(card.get("title", ""), card.get("sub", "")) if card else None,
                 end=textfx.end_overlay() if end else None)
@@ -369,13 +401,15 @@ def render_job(job: dict, out_dir: Path) -> dict:
                 if g.get("title"):
                     sc["card"] = {"title": g["title"], "sub": g.get("sub", "")}
             chosen.append({k: v for k, v in pick.items() if k != "segment"} | {"start": sc["start"], "end": sc["end"]})
+            if job.get("punch_cuts", True) and pick.get("kind") in ("generated video", "video") and sc["dur"] > 2 * CUT_EVERY - 0.5:
+                pick["segment"] = punch_cuts(pick["segment"], lengths[i], work, f"s{i}", i)
             segs.append(pick["segment"])
             durs.append(sc["dur"])
             log(f"scene {i + 1}: {pick['kind']} — {pick.get('title')}")
 
         bg = work / "bg.mp4"
         crossfade(segs, durs, bg)
-        ov = overlay_track(words, scenes, job.get("hook") or "", total, work)
+        ov = overlay_track(words, scenes, job.get("hook") or "", total, work, job.get("caption_style") or "word")
         final = out_dir / f"{job['job_id']}.mp4"
         flt = (f"[0:v][2:v]overlay=0:0:eof_action=repeat:format=auto[v1];"
                f"color=c=0xFFD54A:s={W}x8:r={FPS}:d={total:.3f}[bar];"
