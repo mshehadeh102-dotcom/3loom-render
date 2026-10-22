@@ -125,7 +125,8 @@ def cooldown(url: str, retry_after: str | None, attempt: int) -> None:
         time.sleep(secs)
 
 
-def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float = 0.0) -> tuple[Path, bool]:
+def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float = 0.0,
+             attempts: int = 4) -> tuple[Path, bool]:
     """Fetch to a local file. With `budget` (seconds) or when `limit` bytes are reached the download stops
     early and returns (path, True): a truncated video is still usable from the start after a remux.
     Without a budget, oversize raises (images must be complete)."""
@@ -133,7 +134,7 @@ def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float
         shutil.copyfile(url, dest)
         return dest, False
     gate = WIKI_DL if "wikimedia.org" in url else threading.Semaphore(1)
-    for attempt in range(4):
+    for attempt in range(attempts):
         polite(url)
         gate.acquire()
         req = urllib.request.Request(url, headers={"User-Agent": UA})
@@ -151,9 +152,11 @@ def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float
                         raise VetError("file too large")
             return dest, False
         except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+            if e.code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
                 cooldown(url, e.headers.get("Retry-After"), attempt)
                 continue
+            if e.code == 429:
+                cooldown(url, e.headers.get("Retry-After"), 0)
             raise VetError(f"download HTTP {e.code}")
     raise VetError("download failed")
 
@@ -389,7 +392,13 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
         rep["treatment"] = "ken-burns photo"
         return seg, rep
     if url.startswith("https://"):  # work on a local copy: seeking over HTTP triggers rate limits
-        local, partial = download(url, work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60)
+        try:
+            local, partial = download(url, work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=2)
+        except VetError as e:
+            if "HTTP 429" not in str(e) or not c.get("alt_url"):
+                raise
+            # uncached transcodes are throttled; the original file is served from cache (partial start is enough)
+            local, partial = download(c["alt_url"], work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=2)
         url = str(remux_partial(local, work, tag) if partial else local)
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
