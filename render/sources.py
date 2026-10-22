@@ -142,7 +142,9 @@ def find_candidates(scene: dict, log=print) -> list[dict]:
     queries = [q for q in (scene.get("queries") or []) if q][:3] or [scene.get("text", "")[:60]]
     must, avoid = scene.get("must") or [], scene.get("avoid") or []
     seen, cands = set(), []
-    for q in queries:
+    for qi, q in enumerate(queries):
+        if qi and len([c for c in cands if c["score"] > 0]) >= 6:
+            break
         for fn in (lambda: commons_videos(q), lambda: nasa(q, "video"), lambda: commons_images(q), lambda: nasa(q, "image")):
             try:
                 for c in fn():
