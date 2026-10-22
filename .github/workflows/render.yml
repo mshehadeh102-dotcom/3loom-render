@@ -36,6 +36,7 @@ jobs:
           [[ "$JOB_ID" =~ ^[A-Za-z0-9_-]{1,80}$ ]] || { echo "bad job_id"; exit 1; }
           cp "jobs/${JOB_ID}.json" "$JOB_FILE"
           python3 render/run_job.py mask "$JOB_FILE"
+          python3 render/preflight.py "$JOB_FILE"
 
       - name: Install ffmpeg, Arabic fonts and Pillow (raqm)
         run: |
