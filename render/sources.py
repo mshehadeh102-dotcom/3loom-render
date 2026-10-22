@@ -19,10 +19,23 @@ BAD_TITLE = re.compile(r"\b(diagram|map|chart|graph|logo|infographic|poster|sche
 
 
 def _get(url: str, params: dict, timeout: int = 30) -> dict:
+    import time
+    import urllib.error
+
+    import vet  # shared polite throttle for wikimedia hosts
     q = url + "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(q, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    for attempt in range(4):
+        vet.polite(q)
+        req = urllib.request.Request(q, headers={"User-Agent": UA})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and attempt < 3:
+                time.sleep(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1))
+                continue
+            raise
+    return {}
 
 
 def _strip(s) -> str:
