@@ -33,7 +33,12 @@ def set_font_file(path: str) -> None:
 def _font(size: int) -> ImageFont.FreeTypeFont:
     if not _FONT_FILE:
         raise RuntimeError("font not configured")
-    return ImageFont.truetype(_FONT_FILE, size)
+    f = ImageFont.truetype(_FONT_FILE, size)
+    try:  # variable fonts (Noto Kufi Arabic[wght]) -> bold
+        f.set_variation_by_name("Bold")
+    except Exception:  # noqa: BLE001 - static fonts have no variations
+        pass
+    return f
 
 
 SYMBOLS = {"=": ":", "→": "،", "←": "،", "≈": "تقريبًا", "°": "°"}
