@@ -167,10 +167,29 @@ def motion(frames: list[Path]) -> float:
     return sum(diffs) / max(1, len(diffs))
 
 
-def latin_text(img: Path) -> list[str]:
-    """English words Tesseract reads with high confidence (titles, captions, agency logos)."""
-    if not shutil.which("tesseract"):
+_RAPID = None
+
+
+def _rapid_words(img: Path) -> list[str]:
+    global _RAPID
+    try:
+        if _RAPID is None:
+            from rapidocr_onnxruntime import RapidOCR
+            _RAPID = RapidOCR()
+        res, _ = _RAPID(str(img))
+    except Exception:  # noqa: BLE001 - OCR is a filter, never a crash
         return []
+    words = []
+    for _box, text, conf in res or []:
+        if float(conf) >= 0.75:
+            words += re.findall(r"[A-Za-z]{3,}", text)
+    return words
+
+
+def latin_text(img: Path) -> list[str]:
+    """English words read with high confidence (titles, captions, agency logos): Tesseract or RapidOCR."""
+    if not shutil.which("tesseract"):
+        return _rapid_words(img)
     p = subprocess.run(["tesseract", str(img), "-", "-l", "eng", "--psm", "11", "tsv"],
                        capture_output=True, text=True, timeout=60)
     words = []
