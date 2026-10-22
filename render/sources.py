@@ -67,7 +67,7 @@ def score(cand: dict, must: list[str], queries: list[str], avoid: list[str]) -> 
             s += 1.5
     qtok = set().union(*[_tokens(q) for q in queries]) if queries else set()
     s += 0.5 * len(qtok & _tokens(title))
-    sat = re.compile(r"\b(satellite|from space|iss\d*|expedition|modis|landsat|aster|terra|aqua|sentinel|false.colou?r|orbit|astronaut)\b", re.I)
+    sat = re.compile(r"\b(satellite|from space|iss\d*|expedition|modis|landsat|aster|terra|aqua|sentinel|false.colou?r|orbit|astronaut|cira|goes-?\d*|himawari|viirs|noaa|radar|infrared)\b", re.I)
     wants_space = any(re.search(r"satellite|space|orbit|earth from", x, re.I) for x in list(must) + list(queries))
     if not wants_space and sat.search(cand.get("title", "") + " " + cand.get("desc", "")[:200]):
         s -= 3.5
@@ -79,6 +79,9 @@ def score(cand: dict, must: list[str], queries: list[str], avoid: list[str]) -> 
             s -= 6
     if BAD_TITLE.search(cand.get("title", "")):
         s -= 4
+    title_hit = any(m.lower().strip() and m.lower().strip() in title for m in must)
+    if cand["kind"] == "image" and must and not title_hit:
+        s -= 2.5  # a still must at least name the subject; loose description matches looked random
     if cand["kind"] == "video":
         s += 1.0  # real motion beats a still when equally relevant
         if cand.get("duration", 0) and cand["duration"] < 4:
