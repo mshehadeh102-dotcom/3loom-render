@@ -54,9 +54,9 @@ jobs:
           echo "CAPTION_FONT=$HOME/fonts/NotoKufiArabic.ttf" >> "$GITHUB_ENV"
           python3 -m pip install --quiet pillow==11.1.0 rapidocr-onnxruntime
           # optional visual relevance gate (CLIP on CPU); the render skips the gate if this fails
-          timeout 240 python3 -m pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu \
+          timeout 240 python3 -m pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cpu \
             && timeout 180 python3 -m pip install --quiet open_clip_torch \
-            && timeout 120 python3 -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='openai'); print('CLIP ready')" \
+            && timeout 120 python3 -c "import open_clip; open_clip.create_model_and_transforms('ViT-B-32', pretrained='openai'); import torchvision.ops as o, torch; o.nms(torch.zeros(1,4), torch.zeros(1), 0.5); print('CLIP ready')" \
             || echo "CLIP unavailable: relevance gate will be skipped"
           if ! python3 -c "from PIL import features; assert features.check('raqm')"; then
             echo "raqm needs libfribidi; trying apt with a hard time limit"
