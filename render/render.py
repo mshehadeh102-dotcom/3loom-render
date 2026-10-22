@@ -123,14 +123,21 @@ def phrases(script: str) -> list[str]:
 
 
 def timeline(parts: list[str], total: float) -> list[tuple[float, float, str]]:
+    if not parts or total <= 0:
+        return []
     weights = [max(len(p.replace(" ", "")), 4) for p in parts]
-    scale = total / sum(weights)
-    t, out = 0.0, []
-    for p, w in zip(parts, weights):
-        d = max(w * scale, MIN_PHRASE_SEC)
-        out.append((round(t, 3), round(min(t + d, total), 3), p))
-        t += d
-    return out
+    # A minimum caption length cannot exceed the available narration time.
+    # Previously max(weight * scale, MIN_PHRASE_SEC) could push later captions
+    # beyond the end of the video, creating zero-length intervals.
+    minimum = min(MIN_PHRASE_SEC, total / len(parts))
+    remaining = max(0.0, total - minimum * len(parts))
+    weight_sum = sum(weights)
+    boundaries = [0.0]
+    for w in weights:
+        boundaries.append(boundaries[-1] + minimum + remaining * w / weight_sum)
+    boundaries[-1] = total
+    return [(round(boundaries[i], 3), round(boundaries[i + 1], 3), p)
+            for i, p in enumerate(parts)]
 
 
 def caption_png(text: str, font_file: str, dest: Path) -> Path:
