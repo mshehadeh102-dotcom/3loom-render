@@ -37,10 +37,13 @@ jobs:
           cp "jobs/${JOB_ID}.json" "$JOB_FILE"
           python3 render/run_job.py mask "$JOB_FILE"
 
-      - name: Install ffmpeg, Arabic fonts and Pillow (raqm)
+      - name: Install ffmpeg, Arabic fonts, OCR and Pillow (raqm)
+        timeout-minutes: 8
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends ffmpeg fonts-noto-core fontconfig libfribidi0 libharfbuzz0b tesseract-ocr tesseract-ocr-eng >/dev/null
+          sudo -E apt-get update -qq
+          sudo -E apt-get install -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold --no-install-recommends ffmpeg fonts-noto-core fontconfig libfribidi0 libharfbuzz0b tesseract-ocr tesseract-ocr-eng
           fc-cache -f >/dev/null
           python3 -m pip install --quiet pillow==11.1.0
           python3 -c "from PIL import features; assert features.check('raqm'), 'raqm missing'"
@@ -50,6 +53,7 @@ jobs:
         run: python3 tests/test_units.py
 
       - name: Render (scene engine v2)
+        timeout-minutes: 20
         run: python3 render/run_job.py render "$JOB_FILE" "$OUT"
 
       - name: Keep render report
