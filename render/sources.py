@@ -81,7 +81,7 @@ def score(cand: dict, must: list[str], queries: list[str], avoid: list[str]) -> 
         s -= 4
     title_hit = any(m.lower().strip() and m.lower().strip() in title for m in must)
     if cand["kind"] == "image" and must and not title_hit:
-        s -= 2.5  # a still must at least name the subject; loose description matches looked random
+        return -1.0  # a still must name the subject in its title; description-only matches looked random
     if cand["kind"] == "video":
         s += 1.0  # real motion beats a still when equally relevant
         if cand.get("duration", 0) and cand["duration"] < 4:
@@ -122,7 +122,7 @@ def commons_videos(query: str, limit: int = 12) -> list[dict]:
 def commons_images(query: str, limit: int = 12) -> list[dict]:
     d = _get(COMMONS, {"action": "query", "format": "json", "generator": "search", "gsrnamespace": 6,
                        "gsrsearch": f"filetype:bitmap {query}", "gsrlimit": limit, "prop": "imageinfo",
-                       "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1600,
+                       "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1920,
                        "iiextmetadatafilter": "LicenseShortName|Artist|ImageDescription"})
     out = []
     for p in (d.get("query", {}).get("pages", {}) or {}).values():
@@ -179,6 +179,7 @@ def find_candidates(scene: dict, log=print) -> list[dict]:
                     seen.add(key)
                     c["score"] = round(score(c, must, queries, avoid), 2)
                     c["query"] = q
+                    c["scene_queries"], c["scene_must"] = queries[:3], must[:3]
                     cands.append(c)
             except Exception as e:  # noqa: BLE001 - keep searching other sources
                 log(f"search error ({q}): {type(e).__name__}: {e}")
