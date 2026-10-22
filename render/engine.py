@@ -138,6 +138,10 @@ def time_scenes(scenes: list[dict], words: list[dict], total: float) -> list[dic
 
 
 # ---------------------------------------------------------------- footage
+SEARCH_BUDGET = float(os.environ.get("SEARCH_BUDGET", "540"))  # seconds for all footage searching
+T0 = {"t": time.monotonic()}
+
+
 def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, report: list) -> dict:
     tried = []
     if sc.get("type") != "graphic":
@@ -152,7 +156,7 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
             log(f"scene {i + 1}: search failed: {e}")
         for c in cands:
             key = c.get("page") or c["url"]
-            if len(tried) >= MAX_TRIES:
+            if len(tried) >= MAX_TRIES or time.monotonic() - T0["t"] > SEARCH_BUDGET:
                 break
             with LOCK:
                 if key in used:
@@ -318,6 +322,7 @@ def render_job(job: dict, out_dir: Path) -> dict:
         log(f"voice {total:.2f}s, {len(words)} words, sync={sync}")
         import relevance
         log(f"relevance gate: {relevance.status()}")
+        T0["t"] = time.monotonic()
 
         scenes = [dict(s) for s in (job.get("scenes") or [])] or default_scenes(job)
         flow = [u for u in (job.get("flow_clips") or []) if u]
