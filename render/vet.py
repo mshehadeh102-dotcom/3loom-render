@@ -94,28 +94,46 @@ def polite(url: str) -> None:
         _LAST["t"] = time.time()
 
 
-def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024) -> Path:
+def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float = 0.0) -> tuple[Path, bool]:
+    """Fetch to a local file. With `budget` (seconds) or when `limit` bytes are reached the download stops
+    early and returns (path, True): a truncated video is still usable from the start after a remux.
+    Without a budget, oversize raises (images must be complete)."""
     if not url.startswith("https://"):
         shutil.copyfile(url, dest)
-        return dest
+        return dest, False
     for attempt in range(4):
         polite(url)
         req = urllib.request.Request(url, headers={"User-Agent": UA})
+        t0 = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as f:
+            with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
                 total = 0
                 while chunk := r.read(1 << 20):
+                    f.write(chunk)
                     total += len(chunk)
+                    over = total >= limit or (budget and time.monotonic() - t0 > budget)
+                    if over and budget:
+                        return dest, True
                     if total > limit:
                         raise VetError("file too large")
-                    f.write(chunk)
-            return dest
+            return dest, False
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 504) and attempt < 3:
-                time.sleep(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1))
+                time.sleep(min(float(e.headers.get("Retry-After") or 0) or 2 ** (attempt + 1), 20))
                 continue
             raise VetError(f"download HTTP {e.code}")
     raise VetError("download failed")
+
+
+def remux_partial(src: Path, work: Path, tag: str) -> Path:
+    """Copy the decodable start of a truncated download into a clean container so probe() reports
+    the real usable length instead of the header's full duration."""
+    out = work / f"{tag}_part.mkv"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-map", "0:v:0", "-c", "copy", str(out)],
+                   capture_output=True, timeout=120)
+    if not out.exists() or out.stat().st_size < 100_000:
+        raise VetError("partial download not decodable")
+    return out
 
 
 COVER = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
@@ -311,7 +329,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
     """Returns (segment, report). Raises VetError when the candidate must not be used."""
     url = media_url(c)
     if c["kind"] == "image":
-        img = download(url, work / f"{tag}_src.img")
+        img, _ = download(url, work / f"{tag}_src.img", limit=40 * 1024 * 1024)
         with Image.open(img) as im:
             if min(im.size) < 600:
                 raise VetError(f"image too small {im.size}")
@@ -328,7 +346,8 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
         rep["treatment"] = "ken-burns photo"
         return seg, rep
     if url.startswith("https://"):  # work on a local copy: seeking over HTTP triggers rate limits
-        url = str(download(url, work / f"{tag}_src.vid"))
+        local, partial = download(url, work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60)
+        url = str(remux_partial(local, work, tag) if partial else local)
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
         raise VetError("video resolution too low")
