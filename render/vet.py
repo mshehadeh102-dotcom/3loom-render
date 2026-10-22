@@ -175,13 +175,14 @@ def remux_partial(src: Path, work: Path, tag: str) -> Path:
 COVER = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1"
 
 
-def video_segment(src: str, length: float, work: Path, tag: str, src_duration: float = 0.0) -> Path:
+def video_segment(src: str, length: float, work: Path, tag: str, src_duration: float = 0.0,
+                  intro: float | None = None) -> Path:
     """Cut `length` seconds after skipping the intro; slow down slightly short sources, loop very short ones."""
-    if src_duration and src_duration < 3.0:
-        raise VetError("source shorter than 3 s")
-    off = window_start(src_duration, length)
+    if src_duration and src_duration < (1.8 if intro is not None else 3.0):
+        raise VetError("source too short")
+    off = window_start(src_duration, length, intro)
     piece = work / f"{tag}_piece.mp4"
-    take = length * MAX_SLOW + 1.0
+    take = length * (2.0 if intro is not None else MAX_SLOW) + 1.0
     run(["ffmpeg", "-y", "-v", "error", *ua(src), "-ss", f"{off:.2f}", "-i", src, "-t", f"{take:.2f}",
          "-an", "-vf", f"{COVER},fps={FPS},format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
          str(piece)], timeout=420)
@@ -189,9 +190,10 @@ def video_segment(src: str, length: float, work: Path, tag: str, src_duration: f
     if have < 1.5:
         raise VetError("usable part shorter than 1.5 s")
     out = work / f"{tag}.mp4"
+    slow = 2.0 if intro is not None else MAX_SLOW  # a generated shot reads better in slow motion than looped
     if have >= length:
         vf, pre = f"fps={FPS}", []
-    elif have * MAX_SLOW >= length:
+    elif have * slow >= length:
         vf, pre = f"setpts={length / have:.4f}*PTS,fps={FPS}", []
     else:
         vf, pre = f"fps={FPS}", ["-stream_loop", "-1"]  # loops the trimmed piece, never the intro
@@ -328,16 +330,20 @@ def check(frames: list[Path]) -> dict:
             "watermarks": marks, "motion": round(motion(frames), 2) if len(frames) > 1 else 0.0}
 
 
-def window_start(src_duration: float, length: float) -> float:
+def window_start(src_duration: float, length: float, intro: float | None = None) -> float:
+    """Where to start reading a source. Archive footage skips its intro (titles, black); clips generated
+    for the scene (intro=0) start at their first frame, which is the composed start image."""
+    if intro is not None:
+        return 0.0
     if not src_duration:
         return INTRO_SKIP
     off = min(max(INTRO_SKIP, 0.12 * src_duration), max(0.0, src_duration - min(length, src_duration) - 0.3))
     return max(0.0, min(off, src_duration - 2.5))
 
 
-def precheck(url: str, length: float, src_duration: float, work: Path, tag: str) -> dict:
+def precheck(url: str, length: float, src_duration: float, work: Path, tag: str, intro: float | None = None) -> dict:
     """Read 3 frames straight from the source (fast seek) and reject dark / text-heavy footage before encoding."""
-    off = window_start(src_duration, length)
+    off = window_start(src_duration, length, intro)
     span = min(length, max(1.0, (src_duration or off + length) - off - 0.2))
     frames = []
     for k in range(3):
@@ -403,14 +409,15 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
         raise VetError("video resolution too low")
-    pre = precheck(url, length, info["duration"], work, tag)
+    intro = 0.0 if c.get("generated") else None
+    pre = precheck(url, length, info["duration"], work, tag, intro)
     if pre["dark_ratio"] >= 0.5:
         raise VetError(f"black/dark footage {pre['lum']}")
     if len(pre["latin_words"]) >= 3 or pre["watermarks"]:
         raise VetError(f"text/logo in footage: {(pre['watermarks'] or pre['latin_words'])[:5]}")
     reject_style(pre)
     relevant(c, sorted(work.glob(f"{tag}_pre*.png")), pre)
-    seg = video_segment(url, length, work, tag, info["duration"])
+    seg = video_segment(url, length, work, tag, info["duration"], intro)
     frames = sample_frames(seg, work, tag)
     rep = check(frames)
     rep["relevance"] = pre.get("relevance")
