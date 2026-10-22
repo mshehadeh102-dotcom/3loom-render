@@ -325,6 +325,15 @@ def reject_style(rep: dict) -> None:
         raise VetError("black stripe across the picture")
 
 
+def relevant(c: dict, frames: list, rep: dict) -> None:
+    """CLIP check against the scene's own descriptions (see relevance.py); skipped if CLIP is absent."""
+    import relevance
+    r = relevance.judge(frames, c.get("scene_queries") or [c.get("query", "")], c.get("scene_must") or [])
+    rep["relevance"] = r
+    if not r["ok"]:
+        raise VetError(f"not what the scene shows (relevance {r['relevance']}, looks like «{r['best_label']}»)")
+
+
 def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tuple[Path, dict]:
     """Returns (segment, report). Raises VetError when the candidate must not be used."""
     url = media_url(c)
@@ -340,6 +349,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
         if len(rep["latin_words"]) >= 3 or rep["watermarks"]:
             raise VetError(f"text/logo in image: {rep['latin_words'][:5]}")
         reject_style(rep)
+        relevant(c, [work / f"{tag}_src.jpg"], rep)
         seg = ken_burns(work / f"{tag}_src.jpg", length, work, tag, move)
         if detect(seg, "freezedetect=n=0.002:d=2.0", r"freeze_duration: ([\d.]+)"):
             raise VetError("featureless image (looks frozen even with camera move)")
@@ -357,6 +367,7 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
     if len(pre["latin_words"]) >= 3 or pre["watermarks"]:
         raise VetError(f"text/logo in footage: {(pre['watermarks'] or pre['latin_words'])[:5]}")
     reject_style(pre)
+    relevant(c, sorted(work.glob(f"{tag}_pre*.png")), pre)
     seg = video_segment(url, length, work, tag, info["duration"])
     frames = sample_frames(seg, work, tag)
     rep = check(frames)
