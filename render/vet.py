@@ -155,8 +155,8 @@ def download(url: str, dest: Path, limit: int = 150 * 1024 * 1024, budget: float
             if e.code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
                 cooldown(url, e.headers.get("Retry-After"), attempt)
                 continue
-            if e.code == 429:
-                cooldown(url, e.headers.get("Retry-After"), 0)
+            if e.code == 429:  # give up on this file; a short shared pause protects the next request
+                cooldown(url, "8", 0)
             raise VetError(f"download HTTP {e.code}")
     raise VetError("download failed")
 
@@ -393,12 +393,12 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
         return seg, rep
     if url.startswith("https://"):  # work on a local copy: seeking over HTTP triggers rate limits
         try:
-            local, partial = download(url, work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=2)
+            local, partial = download(url, work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=1)
         except VetError as e:
             if "HTTP 429" not in str(e) or not c.get("alt_url"):
                 raise
             # uncached transcodes are throttled; the original file is served from cache (partial start is enough)
-            local, partial = download(c["alt_url"], work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=2)
+            local, partial = download(c["alt_url"], work / f"{tag}_src.vid", limit=45 * 1024 * 1024, budget=60, attempts=1)
         url = str(remux_partial(local, work, tag) if partial else local)
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
