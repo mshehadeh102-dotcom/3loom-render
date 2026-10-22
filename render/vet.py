@@ -96,16 +96,13 @@ COVER = f"scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar
 
 def video_segment(src: str, length: float, work: Path, tag: str, src_duration: float = 0.0) -> Path:
     """Cut `length` seconds after skipping the intro; slow down slightly short sources, loop very short ones."""
-    off = INTRO_SKIP
-    if src_duration:
-        if src_duration < 3.0:
-            raise VetError("source shorter than 3 s")
-        off = min(max(INTRO_SKIP, 0.12 * src_duration), max(0.0, src_duration - min(length, src_duration) - 0.3))
-        off = max(0.0, min(off, src_duration - 2.5))
+    if src_duration and src_duration < 3.0:
+        raise VetError("source shorter than 3 s")
+    off = window_start(src_duration, length)
     piece = work / f"{tag}_piece.mp4"
     take = length * MAX_SLOW + 1.0
     run(["ffmpeg", "-y", "-v", "error", *ua(src), "-ss", f"{off:.2f}", "-i", src, "-t", f"{take:.2f}",
-         "-an", "-vf", f"{COVER},fps={FPS},format=yuv420p", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+         "-an", "-vf", f"{COVER},fps={FPS},format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
          str(piece)], timeout=420)
     have = probe(str(piece))["duration"]
     if have < 1.5:
@@ -203,6 +200,32 @@ def check(frames: list[Path]) -> dict:
             "watermarks": marks, "motion": round(motion(frames), 2) if len(frames) > 1 else 0.0}
 
 
+def window_start(src_duration: float, length: float) -> float:
+    if not src_duration:
+        return INTRO_SKIP
+    off = min(max(INTRO_SKIP, 0.12 * src_duration), max(0.0, src_duration - min(length, src_duration) - 0.3))
+    return max(0.0, min(off, src_duration - 2.5))
+
+
+def precheck(url: str, length: float, src_duration: float, work: Path, tag: str) -> dict:
+    """Read 3 frames straight from the source (fast seek) and reject dark / text-heavy footage before encoding."""
+    off = window_start(src_duration, length)
+    span = min(length, max(1.0, (src_duration or off + length) - off - 0.2))
+    frames = []
+    for k in range(3):
+        t = off + span * (k + 0.5) / 3
+        f = work / f"{tag}_pre{k}.png"
+        try:
+            run(["ffmpeg", "-y", "-v", "error", *ua(url), "-ss", f"{t:.2f}", "-i", url, "-frames:v", "1",
+                 "-vf", "scale=540:960:force_original_aspect_ratio=increase,crop=540:960", str(f)], timeout=120)
+            frames.append(f)
+        except VetError:
+            continue
+    if not frames:
+        raise VetError("could not read frames from source")
+    return check(frames)
+
+
 def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tuple[Path, dict]:
     """Returns (segment, report). Raises VetError when the candidate must not be used."""
     url = media_url(c)
@@ -225,6 +248,11 @@ def build_scene(c: dict, length: float, work: Path, tag: str, move: int) -> tupl
     info = probe(url)
     if info["height"] and min(info["width"], info["height"]) < 360:
         raise VetError("video resolution too low")
+    pre = precheck(url, length, info["duration"], work, tag)
+    if pre["dark_ratio"] >= 0.5:
+        raise VetError(f"black/dark footage {pre['lum']}")
+    if len(pre["latin_words"]) >= 3 or pre["watermarks"]:
+        raise VetError(f"text/logo in footage: {(pre['watermarks'] or pre['latin_words'])[:5]}")
     seg = video_segment(url, length, work, tag, info["duration"])
     frames = sample_frames(seg, work, tag)
     rep = check(frames)
