@@ -142,39 +142,57 @@ SEARCH_BUDGET = float(os.environ.get("SEARCH_BUDGET", "540"))  # seconds for all
 T0 = {"t": time.monotonic()}
 
 
+def _try(cands, sc, i, length, work, used, report, tried) -> dict | None:
+    throttled = 0
+    for c in cands:
+        key = c.get("page") or c["url"]
+        if len(tried) >= MAX_TRIES or (not c.get("generated") and time.monotonic() - T0["t"] > SEARCH_BUDGET):
+            break
+        if throttled >= 2 and c["kind"] == "video" and c.get("source") == "Wikimedia Commons":
+            continue  # this scene's Commons videos keep returning 429: try photos / NASA instead
+        with LOCK:
+            if key in used:
+                continue
+            used.add(key)  # reserve so a parallel scene does not take the same clip
+        try:
+            seg, rep = vet.build_scene(c, length, work, f"s{i}_{len(tried)}", move=i)
+            if c.get("generated") and rep.get("treatment") == "video":
+                rep["treatment"] = "generated video"
+            tried.append({"title": c.get("title"), "ok": True, **rep})
+            report.append({"scene": i + 1, "tried": tried})
+            return {"segment": seg, "kind": rep.get("treatment"), "source": c.get("source"), "title": c.get("title"),
+                    "license": c.get("license"), "author": c.get("author"), "page": c.get("page"), "score": c.get("score")}
+        except Exception as e:  # noqa: BLE001
+            tried.append({"title": c.get("title"), "ok": False, "reason": str(e)[:160]})
+            throttled += "HTTP 429" in str(e)
+            log(f"scene {i + 1}: rejected «{c.get('title')}»: {str(e)[:120]}")
+    return None
+
+
 def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, report: list) -> dict:
     tried = []
-    if sc.get("type") != "graphic":
-        cands = []
-        for u in [sc.get("clip")] + list(sc.get("flow") or []):
+    if sc.get("type") != "graphic" or sc.get("generated"):
+        first = []
+        if sc.get("clip") and sc.get("generated"):
+            # generated for this exact sentence (n8n: start image + image-to-video); same QC as any clip
+            first.append({"kind": "video", "source": sc.get("clip_source") or "AI-generated", "generated": True,
+                          "url": sc["clip"], "title": f"generated scene {i + 1}", "license": "AI-generated",
+                          "author": sc.get("clip_source") or "AI-generated", "page": "", "score": 100})
+        for u in ([] if sc.get("generated") else [sc.get("clip")]) + list(sc.get("flow") or []):
             if u:
-                cands.append({"kind": "video", "source": "Google Flow" if "3loom-inputs" in u else "supplied",
+                first.append({"kind": "video", "source": "Google Flow" if "3loom-inputs" in u else "supplied",
                               "url": u, "title": "supplied clip", "license": "supplied", "author": "", "page": u, "score": 99})
+        got = _try(first, sc, i, length, work, used, report, tried)
+        if got:
+            return got
+        cands = []  # archive search only when nothing supplied/generated passed QC
         try:
-            cands += sources.find_candidates(sc, log)
+            cands = sources.find_candidates(sc, log)
         except Exception as e:  # noqa: BLE001
             log(f"scene {i + 1}: search failed: {e}")
-        throttled = 0
-        for c in cands:
-            key = c.get("page") or c["url"]
-            if len(tried) >= MAX_TRIES or time.monotonic() - T0["t"] > SEARCH_BUDGET:
-                break
-            if throttled >= 2 and c["kind"] == "video" and c.get("source") == "Wikimedia Commons":
-                continue  # this scene's Commons videos keep returning 429: try photos / NASA instead
-            with LOCK:
-                if key in used:
-                    continue
-                used.add(key)  # reserve so a parallel scene does not take the same clip
-            try:
-                seg, rep = vet.build_scene(c, length, work, f"s{i}_{len(tried)}", move=i)
-                tried.append({"title": c.get("title"), "ok": True, **rep})
-                report.append({"scene": i + 1, "tried": tried})
-                return {"segment": seg, "kind": rep.get("treatment"), "source": c.get("source"), "title": c.get("title"),
-                        "license": c.get("license"), "author": c.get("author"), "page": c.get("page"), "score": c.get("score")}
-            except Exception as e:  # noqa: BLE001
-                tried.append({"title": c.get("title"), "ok": False, "reason": str(e)[:160]})
-                throttled += "HTTP 429" in str(e)
-                log(f"scene {i + 1}: rejected «{c.get('title')}»: {str(e)[:120]}")
+        got = _try(cands, sc, i, length, work, used, report, tried)
+        if got:
+            return got
     # generated motion-graphics scene
     bg = textfx.gradient_background(i + 7, work / f"g{i}.jpg")
     seg = vet.ken_burns(bg, length, work, f"g{i}", move=i)
