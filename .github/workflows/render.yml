@@ -86,6 +86,7 @@ jobs:
             --notes "Temporary review copies produced by n8n. Assets older than 14 days are removed automatically."
           gh release upload "$RELEASE_TAG" "$OUT/${JOB_ID}.mp4" --clobber
           if [ -f "$OUT/${JOB_ID}_sheet.jpg" ]; then gh release upload "$RELEASE_TAG" "$OUT/${JOB_ID}_sheet.jpg" --clobber; fi
+          if [ -f "$OUT/render_report.json" ]; then cp "$OUT/render_report.json" "$OUT/${JOB_ID}_report.json"; gh release upload "$RELEASE_TAG" "$OUT/${JOB_ID}_report.json" --clobber; fi
           assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq ".assets[] | [.name, .id] | @tsv")
           echo "asset_id=$(echo "$assets" | awk -v n="${JOB_ID}.mp4" '$1==n{print $2}')" >> "$GITHUB_OUTPUT"
           echo "sheet_asset_id=$(echo "$assets" | awk -v n="${JOB_ID}_sheet.jpg" '$1==n{print $2}')" >> "$GITHUB_OUTPUT"
