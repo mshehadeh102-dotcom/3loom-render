@@ -43,6 +43,9 @@ def prepare(job: dict) -> dict:
             "must": [], "avoid": [],
             "graphic": {"title": "", "sub": ""},
             "image": im["url"],
+            "image_license": im["license"],
+            "image_author": im.get("author", ""),
+            "image_page": im.get("page", ""),
         })
     # Image URLs are fed directly as vetted, licensed photo candidates.
     # Keep the standard engine's QC, captions, voice alignment and MP4 export.
