@@ -178,6 +178,12 @@ def build_scene_segment(sc: dict, i: int, length: float, work: Path, used: set, 
             first.append({"kind": "video", "source": sc.get("clip_source") or "AI-generated", "generated": True,
                           "url": sc["clip"], "title": f"generated scene {i + 1}", "license": "AI-generated",
                           "author": sc.get("clip_source") or "AI-generated", "page": "", "score": 100})
+        if sc.get("image"):
+            first.append({"kind": "image", "source": sc.get("image_source") or "licensed still",
+                          "url": sc["image"], "title": f"scene {i + 1} still",
+                          "license": sc.get("image_license") or "provided",
+                          "author": sc.get("image_author") or "", "page": sc.get("image_page") or "",
+                          "score": 100})
         for u in ([] if sc.get("generated") else [sc.get("clip")]) + list(sc.get("flow") or []):
             if u:
                 first.append({"kind": "video", "source": "Google Flow" if "3loom-inputs" in u else "supplied",
